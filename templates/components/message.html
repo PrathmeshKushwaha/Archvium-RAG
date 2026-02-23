@@ -1,0 +1,112 @@
+<!--
+  message.html — HTMX response fragment injected into #chat-log.
+
+  Context variables
+  -----------------
+  role         : "user" | "assistant"
+  content      : The message text
+  user_message : (optional) The user's question, rendered before the AI bubble
+  is_error     : bool – renders with error styling when True
+-->
+
+{% if user_message is defined and user_message %}
+<!-- ── User bubble ──────────────────────────────────────────────────────── -->
+<div class="msg-enter" style="
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.6rem 0;
+">
+  <div style="max-width: 72%; display:flex; flex-direction:column; align-items:flex-end; gap:0.25rem;">
+    <span style="font-size:0.68rem; color:var(--text-muted); font-family:'JetBrains Mono',monospace;">You</span>
+    <div style="
+      background: var(--user-bg);
+      border: 1px solid var(--user-border);
+      border-radius: var(--radius) 0 var(--radius) var(--radius);
+      padding: 0.65rem 0.95rem;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: var(--text);
+      word-break: break-word;
+      white-space: pre-wrap;
+    ">{{ user_message }}</div>
+  </div>
+
+  <!-- User avatar -->
+  <div style="
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--user-bg);
+    border: 1px solid var(--user-border);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1.2rem;
+  ">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+      <circle cx="12" cy="7" r="4"/>
+    </svg>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Assistant bubble ────────────────────────────────────────────────── -->
+<div class="msg-enter" style="
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.6rem 0 1rem;
+">
+  <!-- AI avatar -->
+  <div style="
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    border: 1px solid {% if is_error %}var(--error-border){% else %}var(--border){% endif %};
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1.2rem;
+  ">
+    {% if is_error %}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#e05c5c" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+    {% else %}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+    {% endif %}
+  </div>
+
+  <div style="max-width: 78%; display:flex; flex-direction:column; gap:0.25rem;">
+    <span style="font-size:0.68rem; color:var(--text-muted); font-family:'JetBrains Mono',monospace;">
+      {% if is_error %}System{% else %}Archivum{% endif %}
+    </span>
+
+    <div style="
+      background: {% if is_error %}var(--error-bg){% else %}var(--ai-bg){% endif %};
+      border: 1px solid {% if is_error %}var(--error-border){% else %}var(--ai-border){% endif %};
+      border-radius: 0 var(--radius) var(--radius) var(--radius);
+      padding: 0.75rem 1rem;
+      font-size: 0.9rem;
+      line-height: 1.7;
+      color: {% if is_error %}#e07070{% else %}var(--text){% endif %};
+      word-break: break-word;
+      white-space: pre-wrap;
+    ">
+      {% if is_error %}
+        <span style="margin-right:0.35rem;">⚠</span>
+      {% endif %}
+      {{ content }}
+    </div>
+
+    <!-- Subtle timestamp -->
+    <span style="font-size:0.65rem; color:var(--text-muted); font-family:'JetBrains Mono',monospace; padding-left:0.2rem;">
+      {{ "now" }}
+    </span>
+  </div>
+</div>

@@ -1,0 +1,476 @@
+{% extends "base.html" %}
+
+{% block title %}Archivum · RAG Chat{% endblock %}
+
+{% block body %}
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     HIDDEN TEMPLATE — User bubble clone source.
+     Cloned client-side on submit so the message appears instantly.
+════════════════════════════════════════════════════════════════════════ -->
+<template id="user-bubble-template">
+  <div class="msg-enter" data-role="user-bubble" style="
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.6rem 0;
+  ">
+    <div style="max-width:72%; display:flex; flex-direction:column; align-items:flex-end; gap:0.25rem;">
+      <span style="font-size:0.68rem; color:var(--text-muted); font-family:'JetBrains Mono',monospace;">You</span>
+      <div class="user-bubble-text" style="
+        background: var(--user-bg);
+        border: 1px solid var(--user-border);
+        border-radius: var(--radius) 0 var(--radius) var(--radius);
+        padding: 0.65rem 0.95rem;
+        font-size: 0.9rem;
+        line-height: 1.6;
+        color: var(--text);
+        word-break: break-word;
+        white-space: pre-wrap;
+      "></div>
+    </div>
+    <div style="
+      width:30px; height:30px; border-radius:50%;
+      background:var(--user-bg); border:1px solid var(--user-border);
+      display:flex; align-items:center; justify-content:center;
+      flex-shrink:0; margin-top:1.2rem;
+    ">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+        <circle cx="12" cy="7" r="4"/>
+      </svg>
+    </div>
+  </div>
+</template>
+
+<div style="display:flex; height:100vh; overflow:hidden;">
+
+  <!-- ════════════════════════════════════════════════════════════
+       SIDEBAR
+  ════════════════════════════════════════════════════════════════ -->
+  <aside style="
+    width: 288px; min-width: 288px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  ">
+    <!-- Brand -->
+    <div style="padding: 1.75rem 1.5rem 1.25rem;">
+      <h1 style="font-size:1.5rem; font-weight:700; color:var(--text); margin:0 0 0.25rem;">Archivum</h1>
+      <div class="accent-line"></div>
+      <p style="font-size:0.75rem; color:var(--text-muted); margin:0.6rem 0 0; line-height:1.4;">
+        RAG · Hybrid Search · Precision retrieval
+      </p>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Upload section -->
+    <div style="padding:1.25rem 1.5rem; flex:1; overflow-y:auto;">
+      <p style="font-size:0.7rem; font-weight:500; letter-spacing:0.1em; color:var(--text-muted); text-transform:uppercase; margin:0 0 0.85rem;">
+        Document Library
+      </p>
+
+      <!--
+        Upload form.
+        hx-swap="beforeend" on #upload-status appends each status badge.
+        Session ID comes from the hidden input which is kept in sync by
+        resetSession() whenever New Session is clicked.
+      -->
+      <form
+        id="upload-form"
+        hx-post="/upload"
+        hx-target="#upload-status"
+        hx-swap="beforeend"
+        hx-encoding="multipart/form-data"
+        hx-indicator="#upload-indicator"
+        style="display:flex; flex-direction:column; gap:0.75rem;"
+      >
+        <input type="hidden" name="session_id" id="session-id-upload" value="{{ session_id }}" />
+
+        <label id="drop-zone" style="
+          display:flex; flex-direction:column; align-items:center; justify-content:center;
+          gap:0.5rem; padding:1.5rem 1rem;
+          border:1.5px dashed var(--border); border-radius:var(--radius);
+          cursor:pointer; transition:border-color 0.2s, background 0.2s;
+          text-align:center; min-height:110px;
+        "
+          onmouseover="this.style.borderColor='var(--accent-dim)';this.style.background='rgba(201,169,110,0.04)'"
+          onmouseout="this.style.borderColor='var(--border)';this.style.background='transparent'"
+        >
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--text-muted)">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <line x1="9"  y1="15" x2="15" y2="15"/>
+          </svg>
+          <span style="font-size:0.8rem; color:var(--text-muted); line-height:1.4;">
+            Click to select a<br/>
+            <span style="color:var(--accent);">PDF or Markdown</span> file
+          </span>
+          <input type="file" name="file" id="file-input"
+                 accept=".pdf,.md,.markdown" style="display:none;"
+                 onchange="updateFileName(this)" />
+        </label>
+
+        <p id="file-name-display" style="
+          font-size:0.75rem; color:var(--text-muted); text-align:center;
+          margin:0; display:none; font-family:'JetBrains Mono',monospace;
+        "></p>
+
+        <div style="position:relative;">
+          <button type="submit" class="btn-primary" style="width:100%; justify-content:center;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
+              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+            </svg>
+            Ingest Document
+          </button>
+          <div id="upload-indicator" class="htmx-indicator" style="
+            position:absolute; inset:0; background:var(--surface);
+            border-radius:var(--radius); border:1px solid var(--border);
+            align-items:center; justify-content:center; gap:0.35rem;
+          ">
+            <div class="pulse-dot"></div>
+            <div class="pulse-dot"></div>
+            <div class="pulse-dot"></div>
+            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.25rem;">Processing…</span>
+          </div>
+        </div>
+      </form>
+
+      <div id="upload-status" style="display:flex; flex-direction:column; gap:0.5rem; margin-top:0.75rem;"></div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Session footer -->
+    <div style="padding:1rem 1.5rem; display:flex; flex-direction:column; gap:0.6rem;">
+      <p id="session-label" style="font-size:0.7rem; color:var(--text-muted); margin:0; text-align:center; font-family:'JetBrains Mono',monospace;">
+        Session: {{ session_id }}
+      </p>
+
+      <!--
+        New Session button.
+
+        hx-swap="none"  → HTMX discards the response body entirely.
+                          No OOB swaps, no DOM mutation from the server.
+                          All reset work is done in handleNewSession() below.
+
+        The server returns JSON {"session_id": "..."}.
+        handleNewSession() reads it from event.detail.xhr.responseText.
+      -->
+      <button
+        class="btn-ghost"
+        style="width:100%; justify-content:center;"
+        hx-post="/session/new"
+        hx-swap="none"
+        hx-on::after-request="handleNewSession(event)"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+        New Session
+      </button>
+    </div>
+  </aside>
+
+  <!-- ════════════════════════════════════════════════════════════
+       MAIN CHAT AREA
+  ════════════════════════════════════════════════════════════════ -->
+  <main style="flex:1; display:flex; flex-direction:column; overflow:hidden; background:var(--bg);">
+
+    <!-- Header -->
+    <header style="
+      padding:1rem 1.75rem; border-bottom:1px solid var(--border);
+      display:flex; align-items:center; justify-content:space-between;
+      background:var(--surface); flex-shrink:0;
+    ">
+      <div>
+        <h2 style="font-size:1rem; font-weight:500; margin:0; color:var(--text); font-family:'DM Sans',sans-serif;">Document Chat</h2>
+        <p style="font-size:0.72rem; color:var(--text-muted); margin:0; margin-top:1px;">Answers grounded in your uploaded documents only</p>
+      </div>
+      <span style="
+        font-size:0.7rem; padding:0.25rem 0.6rem;
+        border:1px solid var(--border); border-radius:99px;
+        color:var(--text-muted); font-family:'JetBrains Mono',monospace;
+      ">Mistral-7B · BM25+Qdrant</span>
+    </header>
+
+    <!-- Chat log -->
+    <div id="chat-log" style="
+      flex:1; overflow-y:auto;
+      padding:1.5rem 2rem 0.5rem;
+      display:flex; flex-direction:column; gap:0;
+    ">
+      <!-- Empty state -->
+      <div id="empty-state" style="margin:auto; text-align:center; max-width:360px; opacity:0.5;">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"
+             style="margin:0 auto 1rem; display:block; color:var(--text-muted)">
+          <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+          <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+        </svg>
+        <p style="font-family:'Playfair Display',serif; font-size:1.1rem; color:var(--text-muted); margin:0 0 0.5rem;">
+          Upload a document to begin
+        </p>
+        <p style="font-size:0.8rem; color:var(--text-muted); line-height:1.6; margin:0;">
+          Your questions will be answered using only the content in your uploaded documents.
+        </p>
+      </div>
+
+      <!--
+        Thinking indicator — permanent last child of #chat-log.
+        HTMX inserts ai_message.html *before* this via hx-swap="beforebegin",
+        so AI replies slot in above the dots and the dots stay at the bottom.
+        Shown/hidden by onBeforeChatRequest / onAfterChatRequest in JS.
+        It is NOT replaced by any server OOB swap — that was the root cause
+        of forms breaking after New Session in the previous version.
+      -->
+      <div id="thinking-indicator" style="
+        display:none; align-items:flex-start; gap:0.65rem; padding:0.6rem 0 1rem;
+      ">
+        <div style="
+          width:30px; height:30px; border-radius:50%;
+          background:var(--surface-2); border:1px solid var(--border);
+          display:flex; align-items:center; justify-content:center;
+          flex-shrink:0; margin-top:1.2rem;
+        ">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+          <span style="font-size:0.68rem; color:var(--text-muted); font-family:'JetBrains Mono',monospace;">Archivum</span>
+          <div style="
+            background:var(--ai-bg); border:1px solid var(--ai-border);
+            border-radius:0 var(--radius) var(--radius) var(--radius);
+            padding:0.6rem 0.95rem; display:flex; align-items:center; gap:0.4rem;
+          ">
+            <div class="pulse-dot"></div>
+            <div class="pulse-dot"></div>
+            <div class="pulse-dot"></div>
+            <span style="font-size:0.8rem; color:var(--text-muted); margin-left:0.2rem;">Thinking…</span>
+          </div>
+        </div>
+      </div>
+    </div><!-- end #chat-log -->
+
+    <!-- Input bar -->
+    <div style="
+      padding:1rem 1.75rem 1.25rem; border-top:1px solid var(--border);
+      background:var(--surface); flex-shrink:0;
+    ">
+      <form
+        id="chat-form"
+        hx-post="/chat"
+        hx-target="#thinking-indicator"
+        hx-swap="beforebegin"
+        hx-on::before-request="onBeforeChatRequest(event)"
+        hx-on::after-request="onAfterChatRequest(event)"
+        style="display:flex; gap:0.75rem; align-items:flex-end;"
+      >
+        <input type="hidden" name="session_id" id="session-id-chat" value="{{ session_id }}" />
+
+        <div style="flex:1; position:relative;">
+          <textarea
+            name="user_input"
+            id="chat-input"
+            rows="1"
+            class="input-field"
+            placeholder="Ask a question about your documents…"
+            style="resize:none; overflow:hidden; padding-right:1rem; line-height:1.6;"
+            onkeydown="handleChatKeydown(event)"
+            oninput="autoResize(this)"
+          ></textarea>
+        </div>
+
+        <button type="submit" class="btn-primary" id="send-btn" style="flex-shrink:0; height:42px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+          Send
+        </button>
+      </form>
+
+      <p style="font-size:0.7rem; color:var(--text-muted); margin:0.5rem 0 0; text-align:center;">
+        Answers are grounded strictly in uploaded documents ·
+        <kbd style="background:var(--surface-2); border:1px solid var(--border); border-radius:3px; padding:0 4px; font-size:0.65rem;">Enter</kbd>
+        to send ·
+        <kbd style="background:var(--surface-2); border:1px solid var(--border); border-radius:3px; padding:0 4px; font-size:0.65rem;">Shift+Enter</kbd>
+        for newline
+      </p>
+    </div>
+  </main>
+</div>
+
+<script>
+  // ─────────────────────────────────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────────────────────────────────
+
+  function scrollToBottom() {
+    const log = document.getElementById('chat-log');
+    log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' });
+  }
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  }
+
+  function updateFileName(input) {
+    const display = document.getElementById('file-name-display');
+    if (input.files.length > 0) {
+      display.textContent = input.files[0].name;
+      display.style.display = 'block';
+    } else {
+      display.style.display = 'none';
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Keyboard: Enter submits, Shift+Enter newlines
+  // ─────────────────────────────────────────────────────────────────────────
+  function handleChatKeydown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const input = document.getElementById('chat-input');
+      if (!input.value.trim()) return;
+      document.getElementById('chat-form').requestSubmit();
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Before HTMX fires /chat — show user bubble instantly
+  // ─────────────────────────────────────────────────────────────────────────
+  function onBeforeChatRequest(event) {
+    const input = document.getElementById('chat-input');
+    const text  = input.value.trim();
+    if (!text) { event.preventDefault(); return; }
+
+    const log       = document.getElementById('chat-log');
+    const indicator = document.getElementById('thinking-indicator');
+
+    // Hide empty state on first message
+    const emptyState = document.getElementById('empty-state');
+    if (emptyState) emptyState.style.display = 'none';
+
+    // Clone the <template> and fill text
+    const clone = document.getElementById('user-bubble-template').content.cloneNode(true);
+    clone.querySelector('.user-bubble-text').textContent = text;
+
+    // Insert before the thinking indicator (keeps it at the bottom)
+    log.insertBefore(clone, indicator);
+
+    // Show thinking dots
+    indicator.style.display = 'flex';
+
+    // Disable send to prevent double-submit
+    document.getElementById('send-btn').disabled = true;
+
+    // Clear textarea immediately
+    input.value = '';
+    input.style.height = 'auto';
+
+    scrollToBottom();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // After HTMX receives /chat response — hide dots, re-enable
+  // ─────────────────────────────────────────────────────────────────────────
+  function onAfterChatRequest(event) {
+    document.getElementById('thinking-indicator').style.display = 'none';
+    document.getElementById('send-btn').disabled = false;
+    scrollToBottom();
+    document.getElementById('chat-input').focus();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // New Session
+  //
+  // FIX — What was broken and why:
+  //
+  // 1. Forms stopped working after clicking New Session.
+  //    Root cause: the old /session/new endpoint returned HTML with
+  //    hx-swap-oob="true" on a <div id="chat-log">. Even though the form
+  //    used hx-swap="none", HTMX still processes OOB swaps from the
+  //    response. That replacement wiped #thinking-indicator and #empty-state
+  //    from the DOM. The chat form's hx-target="#thinking-indicator" then
+  //    pointed at a dead element — HTMX silently failed on every subsequent
+  //    submit, making both the chat textarea and upload button appear broken.
+  //
+  //    Fix: /session/new now returns plain JSON. hx-swap="none" makes HTMX
+  //    ignore the body entirely — no OOB swaps, no DOM mutation from the
+  //    server. All UI reset is done right here in JS, surgically, leaving
+  //    #thinking-indicator and #empty-state untouched in place.
+  //
+  // 2. Answers from previous documents after page refresh.
+  //    Root cause: Qdrant is on-disk and persistent. A refresh generated a
+  //    new session_id but the collection still held old chunks.
+  //    collection_is_empty() returned false, so /chat answered from stale data.
+  //
+  //    Fix: GET / (page load) calls clear_vector_store() on the server.
+  //    /session/new also calls clear_vector_store(). The server tracks
+  //    _indexed_session_id and /chat blocks any session whose ID doesn't
+  //    match, even if Qdrant is non-empty.
+  // ─────────────────────────────────────────────────────────────────────────
+  function handleNewSession(event) {
+    // Read the new session ID from the JSON response
+    let newId;
+    try {
+      const data = JSON.parse(event.detail.xhr.responseText);
+      newId = data.session_id;
+    } catch (e) {
+      // Fallback: generate locally if JSON parse fails
+      newId = Math.random().toString(36).slice(2, 10);
+    }
+
+    // Update BOTH hidden session_id inputs so all future requests use the new ID
+    document.getElementById('session-id-chat').value   = newId;
+    document.getElementById('session-id-upload').value = newId;
+
+    // Update the visible session label
+    document.getElementById('session-label').textContent = 'Session: ' + newId;
+
+    // Clear chat log — keep #empty-state and #thinking-indicator in place
+    // (removing them would break subsequent form submissions)
+    const log = document.getElementById('chat-log');
+    Array.from(log.children).forEach(child => {
+      if (child.id !== 'empty-state' && child.id !== 'thinking-indicator') {
+        child.remove();
+      }
+    });
+
+    // Restore empty state
+    const emptyState = document.getElementById('empty-state');
+    if (emptyState) emptyState.style.display = '';
+
+    // Ensure thinking dots are hidden
+    document.getElementById('thinking-indicator').style.display = 'none';
+
+    // Re-enable send button (in case reset happened mid-request)
+    document.getElementById('send-btn').disabled = false;
+
+    // Clear upload sidebar: status badges, file picker, filename label
+    document.getElementById('upload-status').innerHTML = '';
+    document.getElementById('file-input').value = '';
+    const fnDisplay = document.getElementById('file-name-display');
+    fnDisplay.textContent = '';
+    fnDisplay.style.display = 'none';
+
+    document.getElementById('chat-input').focus();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Init
+  // ─────────────────────────────────────────────────────────────────────────
+  window.addEventListener('load', () => {
+    scrollToBottom();
+    document.getElementById('chat-input').focus();
+  });
+</script>
+{% endblock %}

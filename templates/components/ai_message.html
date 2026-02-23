@@ -1,0 +1,85 @@
+<!--
+  ai_message.html — Server-side AI response fragment.
+
+  Injected by HTMX into #chat-log via hx-swap="beforebegin" targeting
+  #thinking-indicator. Contains ONLY the assistant bubble — the user bubble
+  is rendered instantly on the client before this request completes.
+
+  Context variables
+  -----------------
+  content   : str  – The AI's answer text
+  is_error  : bool – Renders with error styling when True
+-->
+<div class="msg-enter" style="
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.6rem 0 1rem;
+">
+
+  <!-- ── Avatar ──────────────────────────────────────────────────────────── -->
+  <div style="
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    border: 1px solid {{ 'var(--error-border)' if is_error else 'var(--border)' }};
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1.2rem;
+  ">
+    {% if is_error %}
+      <!-- Error icon -->
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#e05c5c" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8"  x2="12"    y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+    {% else %}
+      <!-- Archivum "brain" icon -->
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+    {% endif %}
+  </div>
+
+  <!-- ── Bubble body ─────────────────────────────────────────────────────── -->
+  <div style="max-width: 78%; display: flex; flex-direction: column; gap: 0.25rem;">
+
+    <!-- Sender label -->
+    <span style="
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    ">{% if is_error %}System{% else %}Archivum{% endif %}</span>
+
+    <!-- Text bubble -->
+    <div style="
+      background: {{ 'var(--error-bg)' if is_error else 'var(--ai-bg)' }};
+      border: 1px solid {{ 'var(--error-border)' if is_error else 'var(--ai-border)' }};
+      border-radius: 0 var(--radius) var(--radius) var(--radius);
+      padding: 0.75rem 1rem;
+      font-size: 0.9rem;
+      line-height: 1.75;
+      color: {{ '#e07070' if is_error else 'var(--text)' }};
+      word-break: break-word;
+      white-space: pre-wrap;
+    ">
+      {%- if is_error -%}
+        <span style="margin-right: 0.35rem; opacity: 0.85;">⚠</span>
+      {%- endif -%}
+      {{ content }}
+    </div>
+
+    <!-- Timestamp (static "now" label — replace with a real clock if desired) -->
+    <span style="
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      padding-left: 0.2rem;
+    ">just now</span>
+
+  </div>
+</div>

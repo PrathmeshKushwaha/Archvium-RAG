@@ -1,0 +1,51 @@
+<!--
+  upload_status.html — HTMX fragment appended to #upload-status.
+
+  Context variables
+  -----------------
+  success    : bool
+  filename   : str  – original upload filename
+  message    : str  – human-readable status message
+  chunk_count: int  – (only on success) number of indexed passages
+-->
+<div class="msg-enter" style="
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius);
+  border: 1px solid {% if success %}rgba(100,180,100,0.25){% else %}var(--error-border){% endif %};
+  background: {% if success %}rgba(50,120,50,0.08){% else %}var(--error-bg){% endif %};
+">
+  <!-- Icon -->
+  <div style="margin-top:1px; flex-shrink:0;">
+    {% if success %}
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6dbf7a" stroke-width="2.5">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+    {% else %}
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#e05c5c" stroke-width="2.5">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    {% endif %}
+  </div>
+
+  <div style="min-width:0; flex:1;">
+    <!-- Filename -->
+    <p style="
+      margin:0 0 0.15rem;
+      font-size:0.75rem;
+      font-weight:500;
+      color:{% if success %}#6dbf7a{% else %}#e07070{% endif %};
+      font-family:'JetBrains Mono',monospace;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    ">{{ filename }}</p>
+
+    <!-- Status message -->
+    <p style="margin:0; font-size:0.72rem; color:var(--text-muted); line-height:1.4;">
+      {{ message }}
+    </p>
+  </div>
+</div>

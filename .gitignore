@@ -1,0 +1,8 @@
+.env
+__pycache__/
+docs/
+sessions/
+setup_rag.sh
+tailwindcss
+storage/
+qdrant_db
