@@ -1,217 +1,287 @@
-# Local-First RAG System
+# Archivum
 
-A **production-ready Retrieval-Augmented Generation** pipeline built from scratch — no LangChain, no LlamaIndex.
+**Local-first RAG (Retrieval-Augmented Generation) chat interface.**
 
-| Layer | Technology |
-|---|---|
-| PDF parsing | `pdfplumber` |
-| Markdown chunking | custom heading-aware splitter |
-| Embeddings | `sentence-transformers` (`all-MiniLM-L6-v2`, runs locally) |
-| Vector store | `qdrant-client` (local disk mode, no server needed) |
-| Keyword search | `rank-bm25` (BM25Okapi) |
-| Hybrid merge | Reciprocal Rank Fusion (pure Python) |
-| Reranker | `flashrank` (local cross-encoder) |
-| LLM generation | Hugging Face Inference API via `huggingface-hub` |
-| Memory | JSON-backed `ChatSession` (last 3 turns injected into prompt) |
+Upload a PDF or Markdown document and ask questions about it. Answers are grounded strictly in the content you provide — the model cannot draw on outside knowledge. Everything except the LLM inference call runs entirely on your machine.
 
 ---
 
-## Directory Structure
+## What it does
+
+1. You upload a document through the sidebar.
+2. The system splits it into overlapping text chunks, embeds each chunk using a local sentence-transformer model, and indexes them in a local Qdrant vector database alongside a BM25 keyword index.
+3. When you ask a question, both indexes are searched in parallel, the results are fused with Reciprocal Rank Fusion, the top candidates are reranked with a cross-encoder, and the final context passages are sent to a Hugging Face-hosted LLM.
+4. The LLM is instructed to answer only from the retrieved passages. If the answer is not in your document, it says so.
+
+---
+
+## Architecture
 
 ```
-rag_system/
-├── main.py                  ← Entry point (ingest / query / chat modes)
-├── requirements.txt
-├── README.md
-├── docs/                    ← Drop your PDF / Markdown files here
-├── qdrant_db/               ← Auto-created by Qdrant (local disk mode)
-├── sessions/                ← Auto-created; one JSON file per chat session
-└── src/
-    ├── __init__.py
-    ├── ingestion.py         ← PDF + Markdown parsing & chunking
-    ├── retrieval.py         ← HybridSearch (Qdrant + BM25 + RRF)
-    ├── reranker.py          ← FlashRank cross-encoder reranking
-    ├── memory.py            ← ChatSession with JSON persistence
-    └── generator.py         ← HF InferenceClient + exponential back-off
+Browser (HTMX — no JS framework)
+        │
+        │  HTTP
+        ▼
+  ┌─────────────┐
+  │  FastAPI     │  app.py
+  │  (Uvicorn)   │
+  └──────┬──────┘
+         │
+    ┌────┴─────────────────────────────┐
+    │                                  │
+    ▼                                  ▼
+┌─────────────┐               ┌──────────────────┐
+│  ingestion  │               │    retrieval      │
+│  .py        │               │    .py            │
+│             │               │                   │
+│ pdfplumber  │               │  Qdrant (local)   │
+│ + OCR       │──── chunks ──▶│  all-MiniLM-L6-v2 │
+│ fallback    │               │  BM25Okapi        │
+└─────────────┘               │  RRF fusion       │
+                              └────────┬──────────┘
+                                       │ top-15 candidates
+                                       ▼
+                              ┌──────────────────┐
+                              │  reranker.py      │
+                              │  FlashRank        │
+                              │  cross-encoder    │
+                              └────────┬──────────┘
+                                       │ top-5 passages
+                                       ▼
+                              ┌──────────────────┐
+                              │  generator.py     │
+                              │  HF Inference API │
+                              │  Mistral-7B       │
+                              └────────┬──────────┘
+                                       │ answer
+                                       ▼
+                              ┌──────────────────┐
+                              │  memory.py        │
+                              │  JSON session     │
+                              │  history (3 turns)│
+                              └──────────────────┘
 ```
 
 ---
 
-## Prerequisites
+## Project structure
 
-- Python 3.10+
-- A [Hugging Face account](https://huggingface.co/) with an API token that has *Inference* access
+```
+archivum/
+├── app.py                          # FastAPI server — all routes
+├── requirements.txt                # Pinned dependencies (pip freeze)
+├── requirements.in                 # Loose dependency specs
+├── .env                            # HF_TOKEN and other secrets — never commit
+├── .gitignore
+│
+├── src/
+│   ├── ingestion.py                # PDF/Markdown parsing, chunking, OCR fallback
+│   ├── retrieval.py                # Qdrant vector search + BM25, RRF fusion
+│   ├── reranker.py                 # FlashRank cross-encoder reranking
+│   ├── generator.py                # HF InferenceClient, retry logic, prompting
+│   └── memory.py                   # JSON session persistence, turn history
+│
+├── templates/
+│   ├── base.html                   # Layout, CSS design tokens, HTMX, Tailwind
+│   ├── index.html                  # Two-panel UI (sidebar + chat)
+│   └── components/
+│       ├── ai_message.html         # AI response bubble fragment
+│       └── upload_status.html      # Upload success / error badge fragment
+│
+├── static/                         # Self-hosted assets (see Setup step 3)
+│   ├── js/htmx.min.js
+│   ├── css/tailwind.min.css
+│   └── css/fonts.css
+│
+├── uploads/                        # Session-scoped uploaded files (auto-created)
+├── sessions/                       # JSON session history files (auto-created)
+├── qdrant_db/                      # Qdrant on-disk vector store (auto-created)
+└── indexed_session.json            # Cross-worker session ownership lock (auto-created)
+```
 
 ---
 
-## Installation
+## Tech stack
+
+| Layer | Technology | License |
+|---|---|---|
+| Web framework | [FastAPI](https://fastapi.tiangolo.com) | MIT |
+| ASGI server | [Uvicorn](https://www.uvicorn.org) + [Gunicorn](https://gunicorn.org) | BSD |
+| Frontend | [HTMX](https://htmx.org) + [Tailwind CSS](https://tailwindcss.com) | BSD / MIT |
+| PDF extraction | [pdfplumber](https://github.com/jsvine/pdfplumber) | MIT |
+| OCR fallback | [Tesseract](https://github.com/tesseract-ocr/tesseract) + [pytesseract](https://github.com/madmaze/pytesseract) + [pdf2image](https://github.com/Belval/pdf2image) | Apache 2 / MIT / MIT |
+| Embeddings | [sentence-transformers](https://www.sbert.net) `all-MiniLM-L6-v2` | Apache 2 |
+| Vector store | [Qdrant](https://qdrant.tech) (local disk mode) | Apache 2 |
+| Keyword search | [rank-bm25](https://github.com/dorianbrown/rank_bm25) | Apache 2 |
+| Reranker | [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank) | Apache 2 |
+| LLM inference | [Hugging Face Inference API](https://huggingface.co/inference-api) — Mistral-7B-Instruct-v0.2 | API (free tier) |
+| Templating | [Jinja2](https://jinja.palletsprojects.com) | BSD |
+| Reverse proxy | [Nginx](https://nginx.org) | BSD |
+
+Everything except the HF Inference API call runs locally. No data is sent to any third party except the text passages sent to the HF API during generation.
+
+---
+
+## Requirements
+
+- Python 3.11 or 3.12
+- A free [Hugging Face](https://huggingface.co) account and API token
+- For OCR support on scanned PDFs: `tesseract-ocr` and `poppler-utils` system packages
+
+---
+
+## Local setup
+
+### 1. Clone and create a virtual environment
 
 ```bash
-# 1. Clone / download the project
-cd rag_system
+git clone https://github.com/your-username/archivum.git
+cd archivum
 
-# 2. Create a virtual environment (recommended)
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python3.11 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+```
 
-# 3. Install dependencies
+### 2. Install dependencies
+
+```bash
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-> **Offline embeddings note:** `sentence-transformers` will download `all-MiniLM-L6-v2`
-> the first time it runs (≈ 90 MB). After that it works fully offline.
+For OCR support on scanned PDFs (optional but recommended):
+
+```bash
+pip install pdf2image pytesseract
+
+# Ubuntu / Debian
+sudo apt install tesseract-ocr poppler-utils
+
+# macOS
+brew install tesseract poppler
+```
+
+### 3. Self-host static assets
+
+The app loads HTMX, Tailwind, and fonts from CDNs by default. For a reliable deployment these should be downloaded locally.
+
+```bash
+mkdir -p static/js static/css static/fonts
+
+# HTMX
+curl -o static/js/htmx.min.js \
+  https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js
+
+# Tailwind standalone CLI (no Node.js required)
+# Download from https://github.com/tailwindlabs/tailwindcss/releases/latest
+# then run:
+./tailwindcss -i /dev/null -o static/css/tailwind.min.css \
+  --minify --content "templates/**/*.html"
+
+# Fonts — download the woff2 files listed at:
+# https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,500
+#   &family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@400;500
+# Place them in static/fonts/ and write a @font-face stylesheet at
+# static/css/fonts.css pointing to them.
+```
+
+Then update `base.html` to reference local paths:
+
+```html
+<script src="/static/js/htmx.min.js" defer></script>
+<link  rel="stylesheet" href="/static/css/tailwind.min.css" />
+<link  rel="stylesheet" href="/static/css/fonts.css" />
+```
+
+### 4. Set your Hugging Face token
+
+```bash
+cp .env.example .env
+# Edit .env and set:
+# HF_TOKEN=hf_your_token_here
+```
+
+`.env` is listed in `.gitignore` and is never committed.
+
+### 5. Run the development server
+
+```bash
+uvicorn app:app --reload --host 127.0.0.1 --port 8000
+```
+
+Open **http://localhost:8000** in your browser.
+
+---
+
+## How to use
+
+1. **Upload a document** — click the drop zone in the left sidebar and select a PDF or Markdown file (up to 50 MB). Click *Ingest Document*. A green badge confirms when indexing is complete and shows how many passages were extracted.
+
+2. **Ask a question** — type in the chat box and press `Enter` to send. `Shift+Enter` inserts a newline. The AI will answer using only the passages from your document.
+
+3. **Start a new session** — click *New Session* at the bottom of the sidebar. This clears the chat history, wipes all indexed documents from the vector store, and resets the session ID. You must re-upload documents in the new session.
+
+4. **Refresh the page** — treated the same as starting a new session. Documents from the previous page load are not accessible.
+
+---
+
+## How HTMX wires the UI together
+
+There is no JavaScript framework. HTMX attributes on HTML elements make the three requests and swap the returned HTML fragments into the DOM without a page reload.
+
+| User action | HTMX fires | Server endpoint | Fragment returned |
+|---|---|---|---|
+| Click *Ingest Document* | `POST /upload` | `/upload` | `upload_status.html` badge appended to `#upload-status` |
+| Press Enter / click *Send* | `POST /chat` | `/chat` | `ai_message.html` bubble inserted before `#thinking-indicator` |
+| Click *New Session* | `POST /session/new` | `/session/new` | JSON `{"session_id": "..."}` — client JS handles all DOM resets |
+
+The user message bubble is rendered **instantly client-side** (cloned from a `<template>` element) before the HTMX request fires, so there is zero perceived latency between sending and seeing your message appear.
+
+---
+
+## API reference
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/` | None | Renders `index.html`. Generates a fresh `session_id`. Clears the vector store. |
+| `POST` | `/upload` | None | Saves and ingests a document. Form fields: `file` (multipart), `session_id`. Returns an HTML fragment. |
+| `POST` | `/chat` | None | Runs the RAG pipeline. Form fields: `user_input`, `session_id`. Returns an HTML fragment. |
+| `POST` | `/session/new` | None | Clears the vector store and returns `{"session_id": "new-id"}`. |
+| `GET` | `/health` | None | Returns `{"status": "ok", "timestamp": ..., "indexed_session": ...}`. |
 
 ---
 
 ## Configuration
 
-All settings can be overridden via **environment variables** before running:
+All tunables live at the top of their respective files. The most commonly changed values:
 
-| Variable | Default | Description |
-|---|---|---|
-| `HF_TOKEN` | *required* | Your Hugging Face API token |
-| `HF_MODEL` | `mistralai/Mistral-7B-Instruct-v0.2` | HF model ID to use for generation |
-| `QDRANT_PATH` | `./qdrant_db` | Local path for Qdrant on-disk storage |
-| `DOCS_DIR` | `./docs` | Default documents directory |
-| `SESSIONS_DIR` | `./sessions` | Directory for session JSON files |
-
-```bash
-export HF_TOKEN="hf_YOUR_TOKEN_HERE"
-export HF_MODEL="mistralai/Mistral-7B-Instruct-v0.2"
-```
-
----
-
-## Quick Start
-
-### Step 1 — Add your documents
-
-Copy 10–20 PDF and/or Markdown files into the `docs/` directory:
-
-```bash
-mkdir -p docs
-cp /path/to/your/*.pdf docs/
-cp /path/to/your/*.md  docs/
-```
-
-### Step 2 — Initialize / ingest the Qdrant collection
-
-This parses every document, embeds the chunks, and populates the vector store.
-**Run this once** (or re-run whenever your document set changes):
-
-```bash
-python main.py --mode ingest --docs ./docs
-```
-
-What happens under the hood:
-1. `ingestion.py` parses each file with `pdfplumber` (PDF) or heading-aware splitting (Markdown).
-2. Chunks are embedded locally with `all-MiniLM-L6-v2`.
-3. Embeddings are upserted into a `qdrant_db/` directory (no server process needed).
-4. A BM25 index is built from the same corpus and held in memory.
-
-### Step 3a — Interactive chat
-
-```bash
-python main.py --mode chat --session my_project
-```
-
-Commands inside the chat loop:
-
-| Input | Action |
-|---|---|
-| Any question | Runs the full RAG pipeline |
-| `clear` | Wipes conversation history for the session |
-| `exit` / `quit` | Exits |
-
-### Step 3b — Single question (non-interactive)
-
-```bash
-python main.py --mode query \
-    --query "How does the attention mechanism work?" \
-    --session my_project
-```
-
----
-
-## Pipeline Deep Dive
-
-```
-User Query
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│  HybridSearch.search(query, top_k=15)       │
-│                                             │
-│  ┌──────────────┐   ┌──────────────────┐    │
-│  │ Qdrant dense │   │  BM25 keyword    │    │
-│  │ (cosine sim) │   │  (Okapi BM25)    │    │
-│  └──────┬───────┘   └────────┬─────────┘    │
-│         │                    │              │
-│         └────────┬───────────┘              │
-│                  ▼                          │
-│       Reciprocal Rank Fusion (RRF)          │
-│       score = Σ  1/(60 + rank_r)            │
-└──────────────────┬──────────────────────────┘
-                   │ top-15 candidates
-                   ▼
-┌─────────────────────────────────────────────┐
-│  ChunkReranker.rerank(query, candidates)    │
-│  FlashRank cross-encoder → top-5 passages   │
-└──────────────────┬──────────────────────────┘
-                   │ 5 grounding passages
-                   ▼
-┌─────────────────────────────────────────────┐
-│  RAGGenerator.generate(query, context,      │
-│                        history)             │
-│                                             │
-│  Prompt = system + context + last 3 turns   │
-│         + current question                  │
-│                                             │
-│  HF InferenceClient.chat_completion()       │
-│  Retry on 429 / 503 with exponential        │
-│  back-off (up to 5 attempts)                │
-└──────────────────┬──────────────────────────┘
-                   │
-                   ▼
-              Answer (text)
-                   │
-                   ▼
-┌─────────────────────────────────────────────┐
-│  ChatSession.add_turn(user/assistant)       │
-│  Persisted to sessions/<id>.json            │
-└─────────────────────────────────────────────┘
-```
-
----
-
-## Key Design Decisions
-
-### Why RRF instead of a weighted sum?
-
-RRF is **score-scale agnostic** — it uses ranks, not raw scores. Qdrant cosine similarities (0–1) and BM25 scores (0–∞) live on incompatible scales; converting ranks first avoids the need to tune weighting coefficients.
-
-### Why FlashRank?
-
-It runs a full cross-encoder *locally* with no API call, adding only ~50ms latency. It re-scores the 15-candidate shortlist with the actual query, catching cases where keyword or semantic similarity was misleading.
-
-### Why a strict grounding prompt?
-
-The system prompt explicitly forbids the model from using outside knowledge. This makes the system behave as a **document Q&A tool**, not a general chatbot, preventing hallucinations in technical domains.
-
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| `HF_TOKEN` not set | `export HF_TOKEN="hf_..."` before running |
-| 503 errors from HF | The model is cold-starting; the retry loop handles up to 5 attempts automatically |
-| Empty retrieval results | Verify that ingestion completed (`qdrant_db/` directory must exist and be non-empty) |
-| PDF extraction warnings | Normal for scanned PDFs; consider OCR pre-processing for image-only PDFs |
-| BM25 index not loaded | Restart is handled automatically — BM25 is rebuilt from Qdrant payloads on first search |
+| File | Variable | Default | Description |
+|---|---|---|---|
+| `app.py` | `MAX_UPLOAD_BYTES` | `52428800` (50 MB) | Hard limit on upload size |
+| `app.py` | `MAX_QUERY_CHARS` | `2000` | Query length cap before processing |
+| `app.py` | `MAX_CHARS_PER_CHUNK` | `1500` | Max chars sent per passage to the LLM |
+| `retrieval.py` | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence-transformer model for embeddings |
+| `retrieval.py` | `RRF_K` | `60` | Reciprocal Rank Fusion smoothing constant |
+| `generator.py` | `DEFAULT_MODEL` | `mistralai/Mistral-7B-Instruct-v0.2` | HF model used for generation |
+| `generator.py` | `GenerationConfig.max_new_tokens` | `512` | Maximum tokens in the LLM response |
+| `generator.py` | `GenerationConfig.temperature` | `0.1` | Lower = more deterministic answers |
+| `memory.py` | `MAX_STORED_TURNS` | `200` | Max turns persisted per session JSON file |
+| `app.py` (via `get_session`) | `history_turns` | `3` | Prior exchanges injected into each prompt |
+| `ingestion.py` | `chunk_size` | `512` words | Words per chunk |
+| `ingestion.py` | `overlap` | `64` words | Word overlap between adjacent chunks |
 
 ---
 
 ## License
 
-MIT
+MIT — see `LICENSE`.
+
+---
+
+## Acknowledgements
+
+- [Qdrant](https://qdrant.tech) for the local vector store
+- [sentence-transformers](https://www.sbert.net) for the `all-MiniLM-L6-v2` embedding model
+- [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank) for fast cross-encoder reranking
+- [Mistral AI](https://mistral.ai) for the Mistral-7B-Instruct model hosted on Hugging Face
+- [HTMX](https://htmx.org) for making server-rendered interactivity simple
