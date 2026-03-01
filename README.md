@@ -69,10 +69,7 @@ Browser (HTMX — no JS framework)
 ```
 archivum/
 ├── app.py                          # FastAPI server — all routes
-├── requirements.txt                # Pinned dependencies (pip freeze)
-├── requirements.in                 # Loose dependency specs
-├── .env                            # HF_TOKEN and other secrets — never commit
-├── .gitignore
+├── requirements.txt                
 │
 ├── src/
 │   ├── ingestion.py                # PDF/Markdown parsing, chunking, OCR fallback
@@ -88,15 +85,10 @@ archivum/
 │       ├── ai_message.html         # AI response bubble fragment
 │       └── upload_status.html      # Upload success / error badge fragment
 │
-├── static/                         # Self-hosted assets (see Setup step 3)
+├── static/                         # Self-hosted assets
 │   ├── js/htmx.min.js
 │   ├── css/tailwind.min.css
 │   └── css/fonts.css
-│
-├── uploads/                        # Session-scoped uploaded files (auto-created)
-├── sessions/                       # JSON session history files (auto-created)
-├── qdrant_db/                      # Qdrant on-disk vector store (auto-created)
-└── indexed_session.json            # Cross-worker session ownership lock (auto-created)
 ```
 
 ---
@@ -116,7 +108,6 @@ archivum/
 | Reranker | [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank) | Apache 2 |
 | LLM inference | [Hugging Face Inference API](https://huggingface.co/inference-api) — Mistral-7B-Instruct-v0.2 | API (free tier) |
 | Templating | [Jinja2](https://jinja.palletsprojects.com) | BSD |
-| Reverse proxy | [Nginx](https://nginx.org) | BSD |
 
 Everything except the HF Inference API call runs locally. No data is sent to any third party except the text passages sent to the HF API during generation.
 
