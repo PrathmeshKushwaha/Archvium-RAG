@@ -15,6 +15,20 @@ Upload a PDF or Markdown document and ask questions about it. Answers are ground
 
 ---
 
+## Application Preview
+
+### Before Document Ingestion
+The system interface before loading documents into the vector store.
+
+![App Before Ingestion](assets/screenshots/app-before-ingestion.png)
+
+### After Document Ingestion
+The interface after documents are processed and embeddings are generated.
+
+![App After Ingestion](assets/screenshots/app-after-ingestion.png)
+
+---
+
 ## Architecture
 
 ```
