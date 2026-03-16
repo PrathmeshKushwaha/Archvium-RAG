@@ -1,26 +1,3 @@
-"""
-retrieval.py - Hybrid Search combining Qdrant (vector) and BM25 (keyword).
-
-Results from both backends are merged with Reciprocal Rank Fusion (RRF)
-to produce a unified, re-ranked candidate list.
-
-Qdrant API note: qdrant-client ≥ 1.7 removed the legacy `.search()` method.
-This file uses `.query_points()` which is the current stable API.
-
-Production fixes applied
-------------------------
-FIX 1 — Hash collisions: _chunk_id_to_int previously used abs(hash(...)) % 2**53
-         which is NOT collision-resistant. Two different chunk_id strings can map
-         to the same integer, silently overwriting a Qdrant point with no error.
-         Replaced with uuid.uuid5() which is deterministic AND collision-resistant.
-
-FIX 2 — Concurrent uploads destroying BM25: index_chunks() previously replaced
-         self._bm25 and self._corpus_chunks entirely on each call. A second upload
-         wiped everything from the first. Fixed by accumulating new chunks into the
-         existing corpus (deduplicating by chunk_id) and rebuilding BM25 from the
-         full accumulated list each time.
-"""
-
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -39,10 +16,6 @@ from src.ingestion import Chunk
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
-
 @dataclass
 class SearchResult:
     """A retrieved chunk with its combined RRF score."""
@@ -51,20 +24,10 @@ class SearchResult:
     vector_rank: Optional[int] = None    # Rank from Qdrant (1-based), None if absent
     bm25_rank: Optional[int] = None      # Rank from BM25 (1-based), None if absent
 
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 COLLECTION_NAME = "rag_chunks"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 EMBEDDING_DIM   = 384        # all-MiniLM-L6-v2 output dimension
 RRF_K           = 60         # Standard RRF constant (higher → smoother blending)
-
-
-# ---------------------------------------------------------------------------
-# HybridSearch
-# ---------------------------------------------------------------------------
 
 class HybridSearch:
     """
@@ -94,10 +57,6 @@ class HybridSearch:
 
         self._ensure_collection()
 
-    # ------------------------------------------------------------------
-    # Collection management
-    # ------------------------------------------------------------------
-
     def _ensure_collection(self) -> None:
         """Create the Qdrant collection if it does not already exist."""
         existing = [c.name for c in self._qdrant.get_collections().collections]
@@ -114,28 +73,8 @@ class HybridSearch:
         """Return True when the Qdrant collection holds no points."""
         info = self._qdrant.get_collection(COLLECTION_NAME)
         return (info.points_count or 0) == 0
-
-    # ------------------------------------------------------------------
-    # Indexing
-    # ------------------------------------------------------------------
-
+             
     def index_chunks(self, chunks: list[Chunk], batch_size: int = 64) -> None:
-        """
-        Embed and upsert *chunks* into Qdrant, then rebuild the BM25 index.
-
-        FIX 2 — Accumulation instead of replacement
-        ─────────────────────────────────────────────
-        Previously this method replaced self._corpus_chunks with the new
-        batch, meaning a second upload wiped the BM25 index for the first.
-        Now we:
-          1. Identify which incoming chunk_ids are genuinely new.
-          2. Extend self._corpus_chunks with only those new chunks.
-          3. Rebuild BM25 from the full accumulated corpus.
-
-        Qdrant already handles duplicates correctly via upsert semantics, so
-        re-uploading the same file is safe — the vector points are overwritten
-        in place and the BM25 corpus deduplication keeps one entry per chunk_id.
-        """
         if not chunks:
             logger.warning("index_chunks called with empty chunk list – nothing to do.")
             return
@@ -143,7 +82,6 @@ class HybridSearch:
         logger.info("Indexing %d chunks …", len(chunks))
         texts = [c.text for c in chunks]
 
-        # --- Vector index (Qdrant) — unchanged, upsert is idempotent ---
         for batch_start in range(0, len(chunks), batch_size):
             batch_chunks = chunks[batch_start: batch_start + batch_size]
             batch_texts  = texts[batch_start: batch_start + batch_size]
@@ -152,7 +90,6 @@ class HybridSearch:
 
             points = [
                 PointStruct(
-                    # FIX 1 — uuid5 instead of abs(hash(...)) % 2**53
                     id=self._chunk_id_to_int(c.chunk_id),
                     vector=emb.tolist(),
                     payload={
@@ -168,7 +105,6 @@ class HybridSearch:
             self._qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
             logger.debug("Upserted batch of %d points.", len(points))
 
-        # --- FIX 2 — Keyword index (BM25): accumulate, don't replace ---
         existing_ids: set[str] = {c.chunk_id for c in self._corpus_chunks}
         new_chunks   = [c for c in chunks if c.chunk_id not in existing_ids]
 
@@ -179,10 +115,6 @@ class HybridSearch:
                 len(new_chunks), len(self._corpus_chunks),
             )
         else:
-            # All chunk_ids already present — this is a re-upload of the same file.
-            # The Qdrant vectors are already updated above via upsert.
-            # For BM25, replace the matching entries in-place so the text stays
-            # consistent with the new Qdrant payloads.
             updated_map = {c.chunk_id: c for c in chunks}
             self._corpus_chunks = [
                 updated_map.get(c.chunk_id, c) for c in self._corpus_chunks
@@ -192,7 +124,6 @@ class HybridSearch:
                 len(chunks),
             )
 
-        # Rebuild BM25 from the full corpus (fast for typical doc sizes)
         tokenized_corpus = [c.text.lower().split() for c in self._corpus_chunks]
         self._bm25 = BM25Okapi(tokenized_corpus)
 
@@ -202,10 +133,6 @@ class HybridSearch:
         )
 
     def _load_bm25_from_qdrant(self) -> None:
-        """
-        Reconstruct the BM25 index by scrolling all payloads from Qdrant.
-        Called automatically on the first search after a process restart.
-        """
         logger.info("Rebuilding BM25 index from Qdrant payloads …")
         chunks: list[Chunk] = []
         offset = None
@@ -238,10 +165,6 @@ class HybridSearch:
             logger.info("BM25 index rebuilt from %d stored chunks.", len(chunks))
         else:
             logger.warning("Qdrant collection is empty; BM25 index not built.")
-
-    # ------------------------------------------------------------------
-    # Search
-    # ------------------------------------------------------------------
 
     def search(self, query: str, top_k: int = 15) -> list[SearchResult]:
         """
@@ -285,10 +208,6 @@ class HybridSearch:
 
         return hydrated
 
-    # ------------------------------------------------------------------
-    # Private search backends
-    # ------------------------------------------------------------------
-
     def _vector_search(
         self, query_vector: list[float], top_k: int
     ) -> list[tuple[str, float]]:
@@ -322,10 +241,6 @@ class HybridSearch:
             reverse=True,
         )
         return scored[:top_k]
-
-    # ------------------------------------------------------------------
-    # Reciprocal Rank Fusion (RRF)
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _reciprocal_rank_fusion(
@@ -376,28 +291,7 @@ class HybridSearch:
             )
         return results
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _chunk_id_to_int(chunk_id: str) -> int:
-        """
-        FIX 1 — Collision-resistant chunk_id → Qdrant point ID mapping.
-
-        Old implementation:
-            abs(hash(chunk_id)) % (2 ** 53)
-        Problem: Python's hash() is NOT collision-resistant. Two different
-        strings can produce the same integer, causing Qdrant to silently
-        overwrite a point with no error or warning. With 10 000+ chunks
-        the birthday problem makes collisions likely.
-
-        New implementation:
-            uuid.uuid5(NAMESPACE_DNS, chunk_id)
-        uuid5 is a deterministic SHA-1-based UUID. For any given input
-        string it always produces the same UUID, and the collision
-        probability over the full 128-bit space is astronomically small.
-        We take the lower 63 bits (>> 65) to stay within Qdrant's safe
-        unsigned integer range while preserving full determinism.
-        """
         return uuid.uuid5(uuid.NAMESPACE_DNS, chunk_id).int >> 65
