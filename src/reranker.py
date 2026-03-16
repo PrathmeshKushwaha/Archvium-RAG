@@ -23,16 +23,6 @@ class RankedResult:
 
 
 class ChunkReranker:
-    """
-    Wraps FlashRank to rerank retrieval candidates.
-
-    FlashRank runs fully locally – no network call required.
-
-    Args:
-        model_name: FlashRank model identifier.
-                    "ms-marco-MiniLM-L-12-v2" is a good balance of speed/quality.
-        top_k:      Number of best chunks to keep after reranking.
-    """
 
     def __init__(
         self,
@@ -49,16 +39,7 @@ class ChunkReranker:
         query: str,
         candidates: list[SearchResult],
     ) -> list[RankedResult]:
-        """
-        Rerank *candidates* for *query* and return the top-k best matches.
-
-        Args:
-            query:      The user's search query.
-            candidates: Up to 15 SearchResult objects from hybrid search.
-
-        Returns:
-            Up to self.top_k RankedResult objects sorted by rerank_score desc.
-        """
+        
         if not candidates:
             logger.warning("Reranker received empty candidate list.")
             return []
