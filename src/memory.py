@@ -14,10 +14,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
-
 MAX_STORED_TURNS = 200
 
 @dataclass
@@ -35,11 +31,6 @@ class Session:
     """Full session state persisted to disk."""
     session_id: str
     turns: list[Turn] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# ChatSession
-# ---------------------------------------------------------------------------
 
 class ChatSession:
     """
@@ -68,11 +59,6 @@ class ChatSession:
             session_id,
             len(self._session.turns),
         )
-
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
-
     def add_turn(self, role: str, content: str) -> None:
         """Append a new turn and persist immediately."""
         if role not in {"user", "assistant"}:
@@ -106,10 +92,6 @@ class ChatSession:
     @property
     def session_id(self) -> str:
         return self._session.session_id
-
-    # ------------------------------------------------------------------
-    # Persistence
-    # ------------------------------------------------------------------
 
     def _load_or_create(self, session_id: str) -> Session:
         if self._session_file.exists():
