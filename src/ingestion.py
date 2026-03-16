@@ -24,11 +24,6 @@ class Chunk:
     text: str              # The actual text content
     metadata: dict = field(default_factory=dict)  # Page numbers, headings, etc.
 
-
-# ---------------------------------------------------------------------------
-# PDF Extraction
-# ---------------------------------------------------------------------------
-
 def extract_text_from_pdf(pdf_path: Path) -> list[tuple[int, str]]:
     """
     Extract text from a PDF file page by page.
@@ -68,11 +63,6 @@ def extract_text_from_markdown(md_path: Path) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.error("Could not read Markdown file '%s': %s", md_path, exc)
         return ""
-
-
-# ---------------------------------------------------------------------------
-# Chunking helpers
-# ---------------------------------------------------------------------------
 
 _MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+", re.MULTILINE)
 
@@ -119,11 +109,6 @@ def _sliding_window_chunks(
         if end == len(words):
             break
         start += chunk_size - overlap
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def chunk_pdf(
     pdf_path: Path,
