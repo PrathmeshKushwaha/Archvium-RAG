@@ -22,33 +22,23 @@ from src.reranker import ChunkReranker
 from src.memory import ChatSession
 from src.generator import RAGGenerator, GenerationConfig
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s – %(message)s",
 )
 logger = logging.getLogger("app")
 
-# ---------------------------------------------------------------------------
-# Directories & constants
-# ---------------------------------------------------------------------------
 BASE_DIR     = Path(__file__).parent
 UPLOAD_DIR   = BASE_DIR / "uploads"
 SESSIONS_DIR = BASE_DIR / "sessions"
 QDRANT_PATH  = str(BASE_DIR / "qdrant_db")
 
-# FIX 3 — shared state file readable by all uvicorn worker processes
 SESSION_LOCK_FILE = BASE_DIR / "indexed_session.json"
 
-# FIX 4a — reject uploads larger than this before touching disk
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
-# FIX 6 — prevent context window overflow by capping each chunk's char length
 MAX_CHARS_PER_CHUNK = 1_500  # ≈ 375 tokens at 4 chars/token
 
-# FIX 10 — hard cap on user query length before any processing
 MAX_QUERY_CHARS = 2_000
 
 ALLOWED_EXTENSIONS = {".pdf", ".md", ".markdown"}
@@ -56,17 +46,11 @@ ALLOWED_EXTENSIONS = {".pdf", ".md", ".markdown"}
 UPLOAD_DIR.mkdir(exist_ok=True)
 SESSIONS_DIR.mkdir(exist_ok=True)
 
-# ---------------------------------------------------------------------------
-# FastAPI app
-# ---------------------------------------------------------------------------
 app = FastAPI(title="RAG Chat Interface", version="1.0.0")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # Mount static files after the FastAPI app is created
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# ---------------------------------------------------------------------------
-# RAG component singletons
-# ---------------------------------------------------------------------------
 _search_engine: HybridSearch | None = None
 _reranker: ChunkReranker | None = None
 _generator: RAGGenerator | None = None
@@ -102,16 +86,6 @@ def get_session(session_id: str) -> ChatSession:
         history_turns=3,
     )
 
-
-# ---------------------------------------------------------------------------
-# FIX 3 — Session lock file helpers
-#
-# Replaces the old in-process `_indexed_session_id` variable.
-# All uvicorn workers share the same filesystem, so writing/reading a small
-# JSON file gives consistent session ownership across processes.
-# For a true multi-user production system, swap this for Redis.
-# ---------------------------------------------------------------------------
-
 def get_indexed_session_id() -> str | None:
     """Return the session ID that currently owns the vector index, or None."""
     try:
@@ -135,11 +109,6 @@ def set_indexed_session_id(session_id: str | None) -> None:
     except Exception as exc:
         logger.error("Could not write session lock file: %s", exc)
 
-
-# ---------------------------------------------------------------------------
-# Vector store lifecycle
-# ---------------------------------------------------------------------------
-
 def _do_clear_vector_store() -> None:
     """
     Synchronous core of clear_vector_store — safe to run in a thread.
@@ -160,14 +129,11 @@ def _do_clear_vector_store() -> None:
 
     engine._ensure_collection()
 
-    # Reset BM25 state (FIX 2 accumulation resets cleanly here)
     engine._bm25 = None
     engine._corpus_chunks = []
 
-    # FIX 3 — clear shared lock file
     set_indexed_session_id(None)
 
-    # FIX 4b — wipe uploaded files so disk doesn't fill up
     try:
         if UPLOAD_DIR.exists():
             shutil.rmtree(UPLOAD_DIR)
@@ -185,11 +151,6 @@ async def clear_vector_store() -> None:
     Call this from route handlers with `await`.
     """
     await asyncio.to_thread(_do_clear_vector_store)
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -213,11 +174,6 @@ async def health():
         "timestamp": time.time(),
         "indexed_session": get_indexed_session_id(),
     }
-
-
-# ---------------------------------------------------------------------------
-# Upload endpoint
-# ---------------------------------------------------------------------------
 
 @app.post("/upload", response_class=HTMLResponse)
 async def upload_document(
@@ -250,8 +206,6 @@ async def upload_document(
             },
             status_code=415,
         )
-
-    # ── FIX 4a — read into memory and enforce size limit ───────────────────
     try:
         contents = await file.read()
     except Exception as exc:
@@ -283,7 +237,6 @@ async def upload_document(
             status_code=413,
         )
 
-    # ── Save to session-scoped directory ────────────────────────────────────
     session_upload_dir = UPLOAD_DIR / session_id
     session_upload_dir.mkdir(parents=True, exist_ok=True)
     dest = session_upload_dir / file.filename
@@ -304,7 +257,6 @@ async def upload_document(
             status_code=500,
         )
 
-    # ── FIX 5 — run CPU-bound ingestion in a thread ─────────────────────────
     try:
         chunks: list[Chunk] = await asyncio.to_thread(
             ingest_documents, session_upload_dir
@@ -318,7 +270,6 @@ async def upload_document(
         engine = get_search_engine()
         await asyncio.to_thread(engine.index_chunks, chunks)
 
-        # FIX 3 — persist session ownership to the shared lock file
         set_indexed_session_id(session_id)
 
         logger.info(
@@ -351,9 +302,6 @@ async def upload_document(
     )
 
 
-# ---------------------------------------------------------------------------
-# Chat endpoint
-# ---------------------------------------------------------------------------
 
 @app.post("/chat", response_class=HTMLResponse)
 async def chat(
@@ -361,25 +309,12 @@ async def chat(
     user_input: str = Form(...),
     session_id: str = Form(...),
 ):
-    """
-    Run the full RAG pipeline and return ONLY the AI response HTML fragment.
-
-    Fixes applied:
-      FIX 10 — query hard-capped at MAX_QUERY_CHARS before any processing.
-      FIX 3  — session ownership checked via disk lock file, not in-process var.
-      FIX 6  — context chunks truncated to MAX_CHARS_PER_CHUNK before generation.
-      FIX 5  — search, rerank, and generation run in asyncio.to_thread().
-    """
-    # FIX 10 — cap query length before touching anything else
     user_input = user_input.strip()[:MAX_QUERY_CHARS]
     if not user_input:
         return HTMLResponse("", status_code=204)
 
     engine = get_search_engine()
 
-    # ── FIX 3 — check session ownership via shared lock file ────────────────
-    # Guards both "collection empty" and "belongs to a different session"
-    # (the latter catches the page-refresh stale-data case across workers).
     no_docs = (
         engine.collection_is_empty()
         or get_indexed_session_id() != session_id
@@ -455,22 +390,8 @@ async def chat(
         },
     )
 
-
-# ---------------------------------------------------------------------------
-# Session reset
-# ---------------------------------------------------------------------------
-
 @app.post("/session/new")
 async def new_session(request: Request):
-    """
-    Clear all server-side state and return a fresh session ID as JSON.
-
-    FIX 3 — clear_vector_store() now writes/clears the disk lock file
-             instead of the old in-process variable, so all workers
-             see the reset immediately.
-    FIX 4b — upload directory is wiped inside clear_vector_store().
-    FIX 5  — vector store clearing runs in a thread.
-    """
     await clear_vector_store()
     new_id = str(uuid.uuid4())[:8]
     logger.info("New session created: %s", new_id)
