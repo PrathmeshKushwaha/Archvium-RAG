@@ -17,16 +17,10 @@ from huggingface_hub.utils import HfHubHTTPError
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants & defaults
-# ---------------------------------------------------------------------------
-
 DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 
-# Errors worth retrying
 _RETRYABLE_HTTP_CODES = {429, 503}
 
-# System instruction – answers must be grounded in retrieved context
 _SYSTEM_PROMPT = """\
 You are a precise question-answering assistant. You will be given:
 1. A set of CONTEXT passages retrieved from technical documents.
@@ -42,10 +36,6 @@ Your rules:
 """
 
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
-
 @dataclass
 class GenerationConfig:
     """Tunable generation parameters."""
@@ -54,10 +44,6 @@ class GenerationConfig:
     top_p: float = 0.9
     repetition_penalty: float = 1.1
 
-
-# ---------------------------------------------------------------------------
-# Generator
-# ---------------------------------------------------------------------------
 
 class RAGGenerator:
     """
@@ -89,10 +75,6 @@ class RAGGenerator:
         logger.info("Initialising HF InferenceClient for model '%s'.", model_id)
         self._client = InferenceClient(model=model_id, token=resolved_token)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def generate(
         self,
         query: str,
@@ -113,10 +95,6 @@ class RAGGenerator:
         """
         messages = self._build_messages(query, context_chunks, history or [])
         return self._call_with_retry(messages)
-
-    # ------------------------------------------------------------------
-    # Prompt construction
-    # ------------------------------------------------------------------
 
     def _build_messages(
         self,
@@ -163,10 +141,6 @@ class RAGGenerator:
         messages.append({"role": "user", "content": query})
 
         return messages
-
-    # ------------------------------------------------------------------
-    # API call with exponential back-off
-    # ------------------------------------------------------------------
 
     def _call_with_retry(self, messages: list[dict[str, str]]) -> str:
         """
